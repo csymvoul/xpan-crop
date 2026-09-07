@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>XPan Crop</title>
+<style>
+  :root{
+    --bg: #14120f;
+    --bg-panel: #1c1a16;
+    --line: #38352e;
+    --paper: #ece7dc;
+    --paper-dim: #a39c8c;
+    --safelight: #c1440e;
+    --safelight-dim: #7a3213;
+    --mono: "SF Mono", "Menlo", ui-monospace, monospace;
+    --sans: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--paper);
+    font-family: var(--sans);
+    height: 100%;
+    overscroll-behavior: none;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  header {
+    padding: 18px 20px 10px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand {
+    font-size: 15px;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    color: var(--paper);
+  }
+  .brand span { color: var(--safelight); }
+  .ratio-tag {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--paper-dim);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 3px 7px;
+  }
+
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 16px;
+    gap: 18px;
+    min-height: 0;
+  }
+
+  /* --- Empty / picker state --- */
+  #picker-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    text-align: center;
+    padding: 40px 20px;
+  }
+  #picker-state .frame-mark {
+    width: 180px;
+    height: calc(180px * 24 / 65);
+    border: 1px solid var(--line);
+    position: relative;
+  }
+  #picker-state .frame-mark::before,
+  #picker-state .frame-mark::after {
+    content: "";
+    position: absolute;
+    background: var(--line);
+  }
+  #picker-state .frame-mark::before { top: -6px; bottom: -6px; left: 50%; width: 1px; }
+  #picker-state .frame-mark::after { left: -6px; right: -6px; top: 50%; height: 1px; }
+  #picker-state p {
+    color: var(--paper-dim);
+    font-size: 14px;
+    line-height: 1.5;
+    max-width: 280px;
+    margin: 0;
+  }
+  .pick-btn {
+    -webkit-appearance: none;
+    appearance: none;
+    border: none;
+    background: var(--safelight);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 600;
+    padding: 14px 28px;
+    border-radius: 4px;
+    letter-spacing: 0.01em;
+  }
+  .pick-btn:active { background: var(--safelight-dim); }
+
+  /* --- Crop state --- */
+  #crop-state { display: none; width: 100%; max-width: 640px; flex-direction: column; align-items: center; gap: 16px; }
+  #crop-state.active { display: flex; }
+
+  #stage-wrap {
+    width: 100%;
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+  }
+  #stage-col { flex: 1; min-width: 0; }
+  #stage {
+    width: 100%;
+    aspect-ratio: 65 / 24;
+    background: #000;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid var(--line);
+    touch-action: none;
+  }
+  #stage img {
+    position: absolute;
+    top: 0; left: 0;
+    transform-origin: 0 0;
+    will-change: transform;
+    max-width: none;
+    pointer-events: none;
+    user-select: none;
+  }
+  .corner {
+    position: absolute;
+    width: 14px; height: 14px;
+    pointer-events: none;
+  }
+  .corner::before, .corner::after {
+    content: "";
+    position: absolute;
+    background: var(--paper);
+  }
+  .corner::before { width: 100%; height: 1px; top: 0; }
+  .corner::after { width: 1px; height: 100%; left: 0; }
+  .corner.tl { top: 6px; left: 6px; }
+  .corner.tr { top: 6px; right: 6px; transform: scaleX(-1); }
+  .corner.bl { bottom: 6px; left: 6px; transform: scaleY(-1); }
+  .corner.br { bottom: 6px; right: 6px; transform: scale(-1,-1); }
+
+  .hint {
+    font-size: 12px;
+    color: var(--paper-dim);
+    text-align: center;
+    margin: 0;
+  }
+
+  .actions {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+  }
+  .actions button {
+    -webkit-appearance: none;
+    appearance: none;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--paper-dim);
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 500;
+    padding: 13px 0;
+    border-radius: 4px;
+    flex: 1;
+  }
+  .actions button.primary {
+    background: var(--safelight);
+    border-color: var(--safelight);
+    color: var(--paper);
+    font-weight: 600;
+  }
+  .actions button.primary:active { background: var(--safelight-dim); }
+  .actions button:active { background: var(--line); }
+
+  #file-input { display: none; }
+
+  footer {
+    text-align: center;
+    padding: 10px 0 16px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    color: var(--paper-dim);
+    opacity: 0.6;
+  }
+
+  #result-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(10,9,7,0.94);
+    z-index: 10;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 24px;
+  }
+  #result-overlay.active { display: flex; }
+  #result-overlay img {
+    max-width: 100%;
+    max-height: 60vh;
+    border: 1px solid var(--line);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">XPAN<span>·</span>CROP</div>
+  <div class="ratio-tag">65:24</div>
+</header>
+
+<main>
+  <div id="picker-state">
+    <div class="frame-mark"></div>
+    <p>Pick a photo from your library. It'll crop to the 65:24 panoramic frame at full resolution &mdash; nothing gets scaled down.</p>
+    <button class="pick-btn" id="pick-btn-empty">Choose Photo</button>
+  </div>
+
+  <div id="crop-state">
+    <div id="stage-wrap">
+      <div id="stage-col">
+        <div id="stage">
+          <img id="stage-img" src="" alt="">
+          <div class="corner tl"></div>
+          <div class="corner tr"></div>
+          <div class="corner bl"></div>
+          <div class="corner br"></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="hint">Drag to reposition &mdash; pinch with two fingers to zoom.</p>
+
+    <div class="actions">
+      <button id="choose-again-btn">New Photo</button>
+      <button class="primary" id="export-btn">Crop &amp; Save</button>
+    </div>
+  </div>
+</main>
+
+<footer>FULL RESOLUTION &middot; NO UPSCALING</footer>
+
+<input type="file" id="file-input" accept="image/*">
+
+<div id="result-overlay">
+  <img id="result-img" src="" alt="Cropped result">
+  <p class="hint" id="result-dims"></p>
+  <div class="actions">
+    <button id="result-close-btn">Back</button>
+    <a class="pick-btn" id="result-download-btn" download="xpan-crop.jpg" style="text-decoration:none; text-align:center; flex:1; display:flex; align-items:center; justify-content:center;">Save Image</a>
+  </div>
+</div>
+
+<script>
+(function(){
+  const RATIO_W = 65, RATIO_H = 24;
+  const RATIO = RATIO_W / RATIO_H;
+
+  const fileInput = document.getElementById('file-input');
+  const pickBtnEmpty = document.getElementById('pick-btn-empty');
+  const chooseAgainBtn = document.getElementById('choose-again-btn');
+  const pickerState = document.getElementById('picker-state');
+  const cropState = document.getElementById('crop-state');
+  const stage = document.getElementById('stage');
+  const stageImg = document.getElementById('stage-img');
+  const exportBtn = document.getElementById('export-btn');
+  const resultOverlay = document.getElementById('result-overlay');
+  const resultImg = document.getElementById('result-img');
+  const resultDims = document.getElementById('result-dims');
+  const resultCloseBtn = document.getElementById('result-close-btn');
+  const resultDownloadBtn = document.getElementById('result-download-btn');
+
+  let img = new Image();
+  let naturalW = 0, naturalH = 0;
+  let baseScale = 1;      // scale so image covers the stage at zoom=0
+  let userScale = 1;      // additional zoom multiplier, >= 1
+  let offsetX = 0, offsetY = 0; // top-left of image relative to top-left of stage, in stage px
+  let stageW = 0, stageH = 0;
+
+  function openPicker(){ fileInput.value = ''; fileInput.click(); }
+  pickBtnEmpty.addEventListener('click', openPicker);
+  chooseAgainBtn.addEventListener('click', openPicker);
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    img = new Image();
+    img.onload = () => {
+      naturalW = img.naturalWidth;
+      naturalH = img.naturalHeight;
+      stageImg.src = url;
+      pickerState.style.display = 'none';
+      cropState.classList.add('active');
+      requestAnimationFrame(initStage);
+    };
+    img.src = url;
+  });
+
+  function measureStage(){
+    const rect = stage.getBoundingClientRect();
+    stageW = rect.width;
+    stageH = rect.height;
+  }
+
+  function initStage(){
+    measureStage();
+    baseScale = Math.max(stageW / naturalW, stageH / naturalH);
+    userScale = 1;
+    centerImage();
+    applyTransform();
+  }
+
+  function centerImage(){
+    const dispW = naturalW * baseScale * userScale;
+    const dispH = naturalH * baseScale * userScale;
+    offsetX = (stageW - dispW) / 2;
+    offsetY = (stageH - dispH) / 2;
+  }
+
+
+
+  function clampOffsets(){
+    const dispW = naturalW * baseScale * userScale;
+    const dispH = naturalH * baseScale * userScale;
+    const minX = stageW - dispW; // most negative allowed (right edge flush)
+    const maxX = 0;
+    const minY = stageH - dispH;
+    const maxY = 0;
+    offsetX = Math.min(maxX, Math.max(minX, offsetX));
+    offsetY = Math.min(maxY, Math.max(minY, offsetY));
+  }
+
+  function applyTransform(){
+    const totalScale = baseScale * userScale;
+    stageImg.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${totalScale})`;
+    stageImg.style.width = naturalW + 'px';
+    stageImg.style.height = naturalH + 'px';
+  }
+
+  // Drag to pan (mouse + touch, single pointer)
+  let dragging = false;
+  let lastX = 0, lastY = 0;
+
+  function pointerDown(x, y){
+    dragging = true;
+    lastX = x; lastY = y;
+  }
+  function pointerMove(x, y){
+    if (!dragging) return;
+    offsetX += (x - lastX);
+    offsetY += (y - lastY);
+    lastX = x; lastY = y;
+    clampOffsets();
+    applyTransform();
+  }
+  function pointerUp(){ dragging = false; }
+
+  stage.addEventListener('mousedown', (e) => { pointerDown(e.clientX, e.clientY); });
+  window.addEventListener('mousemove', (e) => { pointerMove(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', pointerUp);
+
+  stage.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1){
+      pointerDown(e.touches[0].clientX, e.touches[0].clientY);
+    } else if (e.touches.length === 2){
+      dragging = false;
+      pinchStart(e.touches);
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  stage.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 1 && dragging){
+      pointerMove(e.touches[0].clientX, e.touches[0].clientY);
+    } else if (e.touches.length === 2){
+      pinchMove(e.touches);
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  stage.addEventListener('touchend', (e) => {
+    pointerUp();
+    pinchActive = false;
+  });
+
+  // Pinch to zoom
+  let pinchActive = false;
+  let pinchStartDist = 0;
+  let pinchStartUserScale = 1;
+  let pinchCenterImgX = 0, pinchCenterImgY = 0;
+
+  function touchDist(touches){
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+  function pinchStart(touches){
+    pinchActive = true;
+    pinchStartDist = touchDist(touches);
+    pinchStartUserScale = userScale;
+    const rect = stage.getBoundingClientRect();
+    const cx = (touches[0].clientX + touches[1].clientX) / 2 - rect.left;
+    const cy = (touches[0].clientY + touches[1].clientY) / 2 - rect.top;
+    const totalOld = baseScale * userScale;
+    pinchCenterImgX = (cx - offsetX) / totalOld;
+    pinchCenterImgY = (cy - offsetY) / totalOld;
+  }
+  function pinchMove(touches){
+    if (!pinchActive) return;
+    const dist = touchDist(touches);
+    const factor = dist / pinchStartDist;
+    let newUserScale = pinchStartUserScale * factor;
+    newUserScale = Math.max(1, Math.min(4, newUserScale));
+    const rect = stage.getBoundingClientRect();
+    const cx = (touches[0].clientX + touches[1].clientX) / 2 - rect.left;
+    const cy = (touches[0].clientY + touches[1].clientY) / 2 - rect.top;
+    userScale = newUserScale;
+    const totalNew = baseScale * userScale;
+    offsetX = cx - pinchCenterImgX * totalNew;
+    offsetY = cy - pinchCenterImgY * totalNew;
+    clampOffsets();
+    applyTransform();
+  }
+
+  window.addEventListener('resize', () => {
+    if (cropState.classList.contains('active')){
+      measureStage();
+      clampOffsets();
+      applyTransform();
+    }
+  });
+
+  // Export: crop the visible stage region at native image resolution
+  exportBtn.addEventListener('click', () => {
+    const totalScale = baseScale * userScale;
+    const natX = -offsetX / totalScale;
+    const natY = -offsetY / totalScale;
+    const natW = stageW / totalScale;
+    const natH = stageH / totalScale;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(natW);
+    canvas.height = Math.round(natH);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, natX, natY, natW, natH, 0, 0, canvas.width, canvas.height);
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    resultImg.src = dataUrl;
+    resultDims.textContent = canvas.width + ' \u00d7 ' + canvas.height + ' px  \u00b7  65:24';
+    resultDownloadBtn.href = dataUrl;
+    resultOverlay.classList.add('active');
+  });
+
+  resultCloseBtn.addEventListener('click', () => {
+    resultOverlay.classList.remove('active');
+  });
+})();
+</script>
+
+</body>
+</html>
