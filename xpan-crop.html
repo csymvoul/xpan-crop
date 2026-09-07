@@ -268,9 +268,10 @@
 <div id="result-overlay">
   <img id="result-img" src="" alt="Cropped result">
   <p class="hint" id="result-dims"></p>
+  <p class="hint" id="result-fallback-hint" style="display:none;">Press and hold the image above, then tap "Save Image" or "Add to Photos".</p>
   <div class="actions">
     <button id="result-close-btn">Back</button>
-    <a class="pick-btn" id="result-download-btn" download="xpan-crop.jpg" style="text-decoration:none; text-align:center; flex:1; display:flex; align-items:center; justify-content:center;">Save Image</a>
+    <button class="primary" id="result-save-btn">Save Image</button>
   </div>
 </div>
 
@@ -291,7 +292,8 @@
   const resultImg = document.getElementById('result-img');
   const resultDims = document.getElementById('result-dims');
   const resultCloseBtn = document.getElementById('result-close-btn');
-  const resultDownloadBtn = document.getElementById('result-download-btn');
+  const resultSaveBtn = document.getElementById('result-save-btn');
+  const resultFallbackHint = document.getElementById('result-fallback-hint');
 
   let img = new Image();
   let naturalW = 0, naturalH = 0;
@@ -455,6 +457,8 @@
   });
 
   // Export: crop the visible stage region at native image resolution
+  let lastBlob = null;
+
   exportBtn.addEventListener('click', () => {
     const totalScale = baseScale * userScale;
     const natX = -offsetX / totalScale;
@@ -468,11 +472,29 @@
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, natX, natY, natW, natH, 0, 0, canvas.width, canvas.height);
 
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
-    resultImg.src = dataUrl;
-    resultDims.textContent = canvas.width + ' \u00d7 ' + canvas.height + ' px  \u00b7  65:24';
-    resultDownloadBtn.href = dataUrl;
-    resultOverlay.classList.add('active');
+    canvas.toBlob((blob) => {
+      lastBlob = blob;
+      const url = URL.createObjectURL(blob);
+      resultImg.src = url;
+      resultDims.textContent = canvas.width + ' \u00d7 ' + canvas.height + ' px  \u00b7  65:24';
+      resultFallbackHint.style.display = 'none';
+      resultOverlay.classList.add('active');
+    }, 'image/jpeg', 0.95);
+  });
+
+  resultSaveBtn.addEventListener('click', () => {
+    if (!lastBlob) return;
+    const file = new File([lastBlob], 'xpan-crop.jpg', { type: 'image/jpeg' });
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).catch(() => {
+        // user cancelled the share sheet, or it failed silently — offer the manual fallback
+        resultFallbackHint.style.display = 'block';
+      });
+    } else {
+      // Web Share API with files isn't supported here — fall back to manual save
+      resultFallbackHint.style.display = 'block';
+    }
   });
 
   resultCloseBtn.addEventListener('click', () => {
