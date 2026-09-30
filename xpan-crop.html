@@ -275,6 +275,7 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/piexifjs@1.0.6/piexif.js"></script>
 <script>
 (function(){
   const RATIO_W = 65, RATIO_H = 24;
@@ -301,6 +302,7 @@
   let userScale = 1;      // additional zoom multiplier, >= 1
   let offsetX = 0, offsetY = 0; // top-left of image relative to top-left of stage, in stage px
   let stageW = 0, stageH = 0;
+  let origExif = null;    // EXIF data read from the original photo, if any
 
   function openPicker(){ fileInput.value = ''; fileInput.click(); }
   pickBtnEmpty.addEventListener('click', openPicker);
@@ -320,6 +322,23 @@
       requestAnimationFrame(initStage);
     };
     img.src = url;
+
+    // Separately read the original file's EXIF (camera, GPS, date) so we can
+    // carry it over into the cropped export. Not all photos have EXIF (e.g.
+    // screenshots, or HEIC files iOS didn't convert to JPEG) — that's fine,
+    // we just skip re-attaching metadata in that case.
+    origExif = null;
+    if (typeof piexif !== 'undefined') {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          origExif = piexif.load(ev.target.result);
+        } catch (err) {
+          origExif = null;
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   });
 
   function measureStage(){
@@ -472,14 +491,36 @@
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, natX, natY, natW, natH, 0, 0, canvas.width, canvas.height);
 
-    canvas.toBlob((blob) => {
+    let finalDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    let metadataKept = false;
+
+    if (origExif && typeof piexif !== 'undefined') {
+      try {
+        // Deep-copy so repeated crops of the same photo don't mutate the original
+        const exifCopy = JSON.parse(JSON.stringify(origExif));
+        // The canvas already drew the pixels upright, so reset any "rotate" flag
+        // from the original photo — otherwise viewers would rotate it again.
+        if (exifCopy['0th']) {
+          exifCopy['0th'][piexif.ImageIFD.Orientation] = 1;
+        }
+        const exifBytes = piexif.dump(exifCopy);
+        finalDataUrl = piexif.insert(exifBytes, finalDataUrl);
+        metadataKept = true;
+      } catch (err) {
+        metadataKept = false;
+      }
+    }
+
+    resultImg.src = finalDataUrl;
+    resultDims.textContent = canvas.width + ' \u00d7 ' + canvas.height + ' px  \u00b7  65:24' +
+      (metadataKept ? '  \u00b7  metadata kept' : '');
+    resultFallbackHint.style.display = 'none';
+    resultOverlay.classList.add('active');
+
+    // Convert the (possibly metadata-carrying) data URL into a Blob/File for sharing
+    fetch(finalDataUrl).then((r) => r.blob()).then((blob) => {
       lastBlob = blob;
-      const url = URL.createObjectURL(blob);
-      resultImg.src = url;
-      resultDims.textContent = canvas.width + ' \u00d7 ' + canvas.height + ' px  \u00b7  65:24';
-      resultFallbackHint.style.display = 'none';
-      resultOverlay.classList.add('active');
-    }, 'image/jpeg', 0.95);
+    });
   });
 
   resultSaveBtn.addEventListener('click', () => {
